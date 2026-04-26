@@ -164,6 +164,9 @@
         export PATH="$TARGET_HOME/.venv/bin:$PATH"
       fi
 
+      # Match the native systemd UMask so files are group-writable
+      umask 0007
+
       if command -v setpriv >/dev/null 2>&1; then
         exec setpriv --reuid="$HERMES_UID" --regid="$HERMES_GID" --init-groups "$@"
       elif command -v su >/dev/null 2>&1; then
@@ -456,6 +459,26 @@
         description = "Extra packages available on PATH.";
       };
 
+      extraPlugins = mkOption {
+        type = types.listOf types.package;
+        default = [ ];
+        description = ''
+          Directory-based plugin packages to symlink into the hermes plugins
+          directory. Each package should contain a plugin.yaml and __init__.py
+          at its root. Hermes discovers these automatically on startup.
+        '';
+        example = literalExpression ''
+          [
+            (pkgs.fetchFromGitHub {
+              owner = "stephenschoettler";
+              repo = "hermes-lcm";
+              rev = "v0.7.0";
+              hash = "sha256-...";
+            })
+          ]
+        '';
+      };
+
       restart = mkOption {
         type = types.str;
         default = "always";
@@ -581,6 +604,18 @@
         });
       })
 
+      # ── Assertions ─────────────────────────────────────────────────────
+      {
+        assertions = let
+          pluginNames = map (plugin:
+            plugin.pname or plugin.name or (builtins.baseNameOf (toString plugin))
+          ) cfg.extraPlugins;
+        in [{
+          assertion = (lib.length pluginNames) == (lib.length (lib.unique pluginNames));
+          message = "services.hermes-agent.extraPlugins: duplicate plugin names detected: ${toString pluginNames}";
+        }];
+      }
+
       # ── Warnings ──────────────────────────────────────────────────────
       (lib.mkIf (cfg.container.enable && !cfg.addToSystemPackages && cfg.container.hostUsers != []) {
         warnings = [
@@ -602,6 +637,7 @@
           "d ${cfg.stateDir}/.hermes/sessions 2770 ${cfg.user} ${cfg.group} - -"
           "d ${cfg.stateDir}/.hermes/logs   2770 ${cfg.user} ${cfg.group} - -"
           "d ${cfg.stateDir}/.hermes/memories 2770 ${cfg.user} ${cfg.group} - -"
+          "d ${cfg.stateDir}/.hermes/plugins 2770 ${cfg.user} ${cfg.group} - -"
           "d ${cfg.stateDir}/home           0750 ${cfg.user} ${cfg.group} - -"
           "d ${cfg.workingDirectory}         2770 ${cfg.user} ${cfg.group} - -"
         ];
@@ -630,6 +666,18 @@
             find "${cfg.stateDir}/.hermes/$_subdir" -type f \
               -exec chmod g+rw {} + 2>/dev/null || true
           done
+
+          # One-time migration: fix files created by the container before the
+          # umask 0007 fix.  They were 0644 (group read-only) instead of 0660.
+          _migration=${cfg.stateDir}/.hermes/.migration-group-write
+          if [ ! -f "$_migration" ]; then
+            find ${cfg.stateDir}/.hermes -type f ! -perm -g=w \
+              -exec chmod g+w {} + 2>/dev/null || true
+            find ${cfg.stateDir}/.hermes -type d ! -perm -g=w \
+              -exec chmod g+w {} + 2>/dev/null || true
+            touch "$_migration"
+            chown ${cfg.user}:${cfg.group} "$_migration"
+          fi
 
           # Merge Nix settings into existing config.yaml.
           # Preserves user-added keys (skills, streaming, etc.); Nix keys win.
@@ -732,6 +780,28 @@ HERMES_NIX_ENV_EOF
           ${lib.concatStringsSep "\n" (lib.mapAttrsToList (name: _value: ''
             install -o ${cfg.user} -g ${cfg.group} -m 0640 ${documentDerivation}/${name} ${cfg.workingDirectory}/${name}
           '') cfg.documents)}
+
+        # ── Declarative plugins ─────────────────────────────────────────
+        mkdir -p ${cfg.stateDir}/.hermes/plugins
+        chown ${cfg.user}:${cfg.group} ${cfg.stateDir}/.hermes/plugins
+        chmod 2770 ${cfg.stateDir}/.hermes/plugins
+
+        # Remove stale managed symlinks (plugins removed from config)
+        for link in ${cfg.stateDir}/.hermes/plugins/nix-managed-*; do
+          [ -L "$link" ] && rm -f "$link"
+        done
+
+        ${lib.concatStringsSep "\n" (map (plugin:
+          let
+            name = plugin.pname or plugin.name or (builtins.baseNameOf (toString plugin));
+          in ''
+            if [ ! -f "${plugin}/plugin.yaml" ]; then
+              echo "ERROR: extraPlugins entry '${plugin}' has no plugin.yaml" >&2
+              exit 1
+            fi
+            ln -sfn ${plugin} ${cfg.stateDir}/.hermes/plugins/nix-managed-${name}
+            chown -h ${cfg.user}:${cfg.group} ${cfg.stateDir}/.hermes/plugins/nix-managed-${name}
+          '') cfg.extraPlugins)}
         '';
       }
 
