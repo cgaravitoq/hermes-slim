@@ -81,10 +81,8 @@ if [ ! -f "$HERMES_HOME/SOUL.md" ]; then
     cp "$INSTALL_DIR/docker/SOUL.md" "$HERMES_HOME/SOUL.md"
 fi
 
-# Sync bundled skills (manifest-based so user edits are preserved)
-if [ -d "$INSTALL_DIR/skills" ]; then
-    python3 "$INSTALL_DIR/tools/skills_sync.py"
-fi
+# Skills sync disabled for slim ecommerce build
+# To re-enable: python3 "$INSTALL_DIR/tools/skills_sync.py"
 
 # Final exec: two supported invocation patterns.
 #
