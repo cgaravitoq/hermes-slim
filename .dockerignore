@@ -2,18 +2,39 @@
 .git
 .gitignore
 .gitmodules
+.gitattributes
+.github
+.mailmap
 
 # Dependencies
 node_modules
 .venv
 
-# CI/CD
-.github
-
 # Environment files
 .env
+.envrc
 
+# Slim ecommerce build excludes
+web/
+website/
+tests/
+docs/
+tinker-atropos/
+plans/
+.plans/
+RELEASE_*.md
+
+# Docs / release notes
 *.md
+!docker/SOUL.md
+
+# Python build artifacts
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.ruff_cache
 
 # Runtime data (bind-mounted at /opt/data; must not leak into build context)
 data/

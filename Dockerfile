@@ -1,53 +1,69 @@
+# syntax=docker/dockerfile:1.7
+
+# ---------- Stage 1: builder ----------
+# Build the Python venv with all wheels compiled. Build tools live only here
+# and never ship in the final image.
 FROM ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie@sha256:b3c543b6c4f23a5f2df22866bd7857e5d304b67a564f4feab6ac22044dde719b AS uv_source
-FROM tianon/gosu:1.19-trixie@sha256:3b176695959c71e123eb390d427efc665eeb561b1540e82679c15e992006b8b9 AS gosu_source
-FROM debian:13.4
+FROM python:3.13-slim AS builder
 
-# Disable Python stdout buffering to ensure logs are printed immediately
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
 
-# Install system dependencies in one layer, clear APT cache
-# tini reaps orphaned zombie processes (MCP stdio subprocesses, git, bun, etc.)
-# that would otherwise accumulate when hermes runs as PID 1. See #15012.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        build-essential nodejs npm python3 ripgrep gcc python3-dev libffi-dev procps git openssh-client tini && \
+        build-essential gcc python3-dev libffi-dev git && \
     rm -rf /var/lib/apt/lists/*
 
-# Non-root user for runtime; UID can be overridden via HERMES_UID at runtime
-RUN useradd -u 10000 -m -d /opt/data hermes
-
-COPY --chmod=0755 --from=gosu_source /gosu /usr/local/bin/
 COPY --chmod=0755 --from=uv_source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
 
 WORKDIR /opt/hermes
 
-# ---------- Layer-cached dependency install ----------
-# Copy only package manifests first so npm install + Playwright are cached
-# unless the lockfiles themselves change.
-COPY package.json package-lock.json ./
+# Source must be present for the editable install to resolve the project's
+# own package list from pyproject.toml.
+COPY . .
 
-RUN npm install --prefer-offline --no-audit && \
-    npm cache clean --force
+# Slim ecommerce build: only the extras the agent actually exercises in
+# production (telegram/slack/discord/aiohttp messaging, croniter scheduling,
+# MCP server integrations). [all] would also pull voice, matrix, modal,
+# daytona, bedrock, mistral, dashboard — none of which this image runs.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv venv /opt/hermes/.venv && \
+    VIRTUAL_ENV=/opt/hermes/.venv uv pip install -e ".[messaging,cron,mcp]"
 
-# ---------- Source code ----------
-# .dockerignore excludes node_modules, so the installs above survive.
+
+# ---------- Stage 2: runtime ----------
+FROM tianon/gosu:1.19-trixie@sha256:3b176695959c71e123eb390d427efc665eeb561b1540e82679c15e992006b8b9 AS gosu_source
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PATH="/opt/hermes/.venv/bin:/opt/data/.local/bin:${PATH}" \
+    HERMES_HOME=/opt/data \
+    VIRTUAL_ENV=/opt/hermes/.venv
+
+# Runtime-only system deps. tini reaps orphaned MCP/git/etc. subprocesses
+# when hermes runs as PID 1 (#15012). git + openssh-client are needed for
+# repo operations the agent performs. ripgrep is the search backend.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ripgrep git openssh-client tini procps ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd -u 10000 -m -d /opt/data hermes
+
+COPY --chmod=0755 --from=gosu_source /gosu /usr/local/bin/
+
+WORKDIR /opt/hermes
+
+# Venv from builder — already wired to /opt/hermes/.venv so entrypoint's
+# `source .venv/bin/activate` keeps working unchanged.
+COPY --from=builder /opt/hermes/.venv /opt/hermes/.venv
+
+# Project source. .dockerignore drops web/, tests/, docs/, .git/, etc.
 COPY --chown=hermes:hermes . .
 
-# ---------- Permissions ----------
-# Make install dir world-readable so any HERMES_UID can read it at runtime.
-# The venv needs to be traversable too.
-USER root
 RUN chmod -R a+rX /opt/hermes
-# Start as root so the entrypoint can usermod/groupmod + gosu.
-# If HERMES_UID is unset, the entrypoint drops to the default hermes user (10000).
 
-# ---------- Python virtualenv ----------
-RUN uv venv && \
-    uv pip install --no-cache-dir -e ".[all]"
-
-# ---------- Runtime ----------
-ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist
-ENV HERMES_HOME=/opt/data
-ENV PATH="/opt/data/.local/bin:${PATH}"
 VOLUME [ "/opt/data" ]
 ENTRYPOINT [ "/usr/bin/tini", "-g", "--", "/opt/hermes/docker/entrypoint.sh" ]
