@@ -7,9 +7,7 @@
   perSystem = { pkgs, system, lib, inputs', ... }:
     let
       hermes-agent = inputs.self.packages.${system}.default;
-      hermesVenv = pkgs.callPackage ./python.nix {
-        inherit (inputs) uv2nix pyproject-nix pyproject-build-systems;
-      };
+      hermesVenv = hermes-agent.hermesVenv;
 
       configMergeScript = pkgs.callPackage ./configMergeScript.nix { };
 
@@ -196,9 +194,7 @@ json.dump(sorted(leaf_paths(DEFAULT_CONFIG)), sys.stdout, indent=2)
         # Verify extraPythonPackages PYTHONPATH injection
         extra-python-packages = let
           testPkg = pkgs.python312Packages.pyfiglet;
-          hermesWithExtra = pkgs.callPackage ./hermes-agent.nix {
-            inherit (inputs) uv2nix pyproject-nix pyproject-build-systems;
-            npm-lockfile-fix = inputs'.npm-lockfile-fix.packages.default;
+          hermesWithExtra = hermes-agent.override {
             extraPythonPackages = [ testPkg ];
           };
         in pkgs.runCommand "hermes-extra-python-packages" { } ''
@@ -214,8 +210,9 @@ json.dump(sorted(leaf_paths(DEFAULT_CONFIG)), sys.stdout, indent=2)
           echo "PASS: test package path found in wrapper"
 
           echo "=== Checking base package has no PYTHONPATH ==="
-          grep -q "PYTHONPATH" ${hermes-agent}/bin/hermes && \
-            (echo "FAIL: base package should not have PYTHONPATH"; exit 1) || true
+          if grep -q "PYTHONPATH" ${hermes-agent}/bin/hermes; then
+            echo "FAIL: base package should not have PYTHONPATH"; exit 1
+          fi
           echo "PASS: base package clean"
 
           echo "=== All extraPythonPackages checks passed ==="

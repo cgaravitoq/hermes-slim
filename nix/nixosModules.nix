@@ -32,6 +32,12 @@
       else cfg.package.override { inherit (cfg) extraPythonPackages; };
     hermes-agent = inputs.self.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
+    # Derive a human-readable plugin name.  fetchFromGitHub yields name="source",
+    # so we fall through to baseNameOf which gives the store hash prefix — not
+    # ideal but unique.  Users can set name= on their fetchFromGitHub to override.
+    pluginName = plugin:
+      plugin.pname or plugin.name or (builtins.baseNameOf (toString plugin));
+
     # Deep-merge config type (from 0xrsydn/nix-hermes-agent)
     deepConfigType = lib.types.mkOptionType {
       name = "hermes-config-attrs";
@@ -165,9 +171,6 @@
       if [ -d "$TARGET_HOME/.venv/bin" ]; then
         export PATH="$TARGET_HOME/.venv/bin:$PATH"
       fi
-
-      # Match the native systemd UMask so files are group-writable
-      umask 0007
 
       if command -v setpriv >/dev/null 2>&1; then
         exec setpriv --reuid="$HERMES_UID" --regid="$HERMES_GID" --init-groups "$@"
@@ -474,6 +477,7 @@
             (pkgs.fetchFromGitHub {
               owner = "stephenschoettler";
               repo = "hermes-lcm";
+              name = "hermes-lcm";
               rev = "v0.7.0";
               hash = "sha256-...";
             })
@@ -482,29 +486,29 @@
       };
 
       extraPythonPackages = mkOption {
-          type = types.listOf types.package;
-          default = [ ];
-          description = ''
-            Python packages to add to PYTHONPATH for entry-point plugin discovery.
-            These are pip-packaged plugins that register via the
-            hermes_agent.plugins entry-point group. Each package must be built
-            with the same Python interpreter as hermes (python312).
-          '';
-          example = literalExpression ''
-            [
-              (pkgs.python312Packages.buildPythonPackage {
-                pname = "rtk-hermes";
-                version = "1.0.0";
-                src = pkgs.fetchFromGitHub {
-                  owner = "ogallotti";
-                  repo = "rtk-hermes";
-                  rev = "main";
-                  hash = "sha256-...";
-                };
-              })
-            ]
-          '';
-        };
+        type = types.listOf types.package;
+        default = [ ];
+        description = ''
+          Python packages to add to PYTHONPATH for entry-point plugin discovery.
+          These are pip-packaged plugins that register via the
+          hermes_agent.plugins entry-point group. Each package must be built
+          with the same Python interpreter as hermes (python312).
+        '';
+        example = literalExpression ''
+          [
+            (pkgs.python312Packages.buildPythonPackage {
+              pname = "rtk-hermes";
+              version = "1.0.0";
+              src = pkgs.fetchFromGitHub {
+                owner = "ogallotti";
+                repo = "rtk-hermes";
+                rev = "main";
+                hash = "sha256-...";
+              };
+            })
+          ]
+        '';
+      };
 
       restart = mkOption {
         type = types.str;
@@ -634,12 +638,10 @@
       # ── Assertions ─────────────────────────────────────────────────────
       {
         assertions = let
-          pluginNames = map (plugin:
-            plugin.pname or plugin.name or (builtins.baseNameOf (toString plugin))
-          ) cfg.extraPlugins;
+          names = map pluginName cfg.extraPlugins;
         in [{
-          assertion = (lib.length pluginNames) == (lib.length (lib.unique pluginNames));
-          message = "services.hermes-agent.extraPlugins: duplicate plugin names detected: ${toString pluginNames}";
+          assertion = (lib.length names) == (lib.length (lib.unique names));
+          message = "services.hermes-agent.extraPlugins: duplicate plugin names detected: ${toString names}. If using fetchFromGitHub, set name = \"plugin-name\" to disambiguate.";
         }];
       }
 
@@ -693,18 +695,6 @@
             find "${cfg.stateDir}/.hermes/$_subdir" -type f \
               -exec chmod g+rw {} + 2>/dev/null || true
           done
-
-          # One-time migration: fix files created by the container before the
-          # umask 0007 fix.  They were 0644 (group read-only) instead of 0660.
-          _migration=${cfg.stateDir}/.hermes/.migration-group-write
-          if [ ! -f "$_migration" ]; then
-            find ${cfg.stateDir}/.hermes -type f ! -perm -g=w \
-              -exec chmod g+w {} + 2>/dev/null || true
-            find ${cfg.stateDir}/.hermes -type d ! -perm -g=w \
-              -exec chmod g+w {} + 2>/dev/null || true
-            touch "$_migration"
-            chown ${cfg.user}:${cfg.group} "$_migration"
-          fi
 
           # Merge Nix settings into existing config.yaml.
           # Preserves user-added keys (skills, streaming, etc.); Nix keys win.
@@ -820,7 +810,7 @@ HERMES_NIX_ENV_EOF
 
         ${lib.concatStringsSep "\n" (map (plugin:
           let
-            name = plugin.pname or plugin.name or (builtins.baseNameOf (toString plugin));
+            name = pluginName plugin;
           in ''
             if [ ! -f "${plugin}/plugin.yaml" ]; then
               echo "ERROR: extraPlugins entry '${plugin}' has no plugin.yaml" >&2
