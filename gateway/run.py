@@ -47,10 +47,21 @@ _AGENT_CACHE_IDLE_TTL_SECS = 3600.0  # evict agents idle for >1h
 # ---------------------------------------------------------------------------
 def _ensure_ssl_certs() -> None:
     """Set SSL_CERT_FILE if the system doesn't expose CA certs to Python."""
-    if "SSL_CERT_FILE" in os.environ:
-        return  # user already configured it
-
     import ssl
+
+    # If SSL_CERT_FILE is already set but points at a missing file or an
+    # unparseable PEM (e.g. a stale host-side path leaking into the container),
+    # drop it before any HTTP import — otherwise the stdlib raises
+    # `ssl.SSLError: [X509] PEM lib` at import time and the process dies.
+    existing = os.environ.get("SSL_CERT_FILE")
+    if existing:
+        if os.path.isfile(existing):
+            try:
+                ssl.create_default_context(cafile=existing)
+                return  # user-supplied bundle is valid
+            except (OSError, ssl.SSLError):
+                pass
+        del os.environ["SSL_CERT_FILE"]
 
     # 1. Python's compiled-in defaults
     paths = ssl.get_default_verify_paths()
