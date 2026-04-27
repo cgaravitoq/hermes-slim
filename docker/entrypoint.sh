@@ -57,10 +57,13 @@ fi
 # --- Running as hermes from here ---
 source "${INSTALL_DIR}/.venv/bin/activate"
 
-# Create essential directory structure.  Cache and platform directories
-# (cache/images, cache/audio, platforms/whatsapp, etc.) are created on
-# demand by the application — don't pre-create them here so new installs
-# get the consolidated layout from get_hermes_dir().
+# Create essential directory structure.  Top-level dirs must exist on
+# startup because some platforms (e.g. Dokploy) mount an empty volume at
+# $HERMES_HOME on first boot, and the app crashes with FileNotFoundError
+# before it can create them itself.  Subdirectories under cache/ and
+# platforms/ (cache/images, cache/audio, platforms/whatsapp, …) are still
+# created on demand by get_hermes_dir() so new installs get the
+# consolidated layout.
 # The "home/" subdirectory is a per-profile HOME for subprocesses (git,
 # ssh, gh, npm …).  Without it those tools write to /root which is
 # ephemeral and shared across profiles.  See issue #4426.
