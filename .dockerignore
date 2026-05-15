@@ -2,6 +2,8 @@
 .git
 .gitignore
 .gitmodules
+.gitattributes
+.mailmap
 
 # Dependencies
 node_modules
@@ -20,8 +22,30 @@ ui-tui/packages/hermes-ink/dist/
 
 # Environment files
 .env
+.envrc
 
-*.md
+# Slim image context. These trees stay in Git so the fork remains close to
+# upstream, but they are not copied into the ecommerce/messaging container.
+docs/
+environments/
+optional-skills/
+skills/
+tests/
+tinker-atropos/
+ui-tui/
+web/
+website/
+plans/
+.plans/
+RELEASE_*.md
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
 
 # Runtime data (bind-mounted at /opt/data; must not leak into build context)
 data/
