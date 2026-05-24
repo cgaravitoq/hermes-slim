@@ -3,7 +3,6 @@
 .gitignore
 .gitmodules
 .gitattributes
-.github
 .mailmap
 
 # Dependencies
@@ -18,31 +17,35 @@ node_modules
 ui-tui/dist/
 ui-tui/packages/hermes-ink/dist/
 
+# CI/CD
+.github
+
 # Environment files
 .env
 .envrc
 
-# Slim ecommerce build excludes
+# Slim image context. These trees stay in Git so the fork remains close to
+# upstream, but they are not copied into the ecommerce/messaging container.
+docs/
+environments/
+optional-skills/
+skills/
+tests/
+tinker-atropos/
+ui-tui/
 web/
 website/
-tests/
-docs/
-tinker-atropos/
 plans/
 .plans/
 RELEASE_*.md
 
-# Docs / release notes
-*.md
-!docker/SOUL.md
-
 # Python build artifacts
-__pycache__
+__pycache__/
 *.pyc
 *.pyo
-*.egg-info
-.pytest_cache
-.ruff_cache
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
 
 # Runtime data (bind-mounted at /opt/data; must not leak into build context)
 data/

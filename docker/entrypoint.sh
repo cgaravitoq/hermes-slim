@@ -39,6 +39,10 @@ if [ "$(id -u)" = "0" ]; then
         # by the mapped user on the host side.
         chown -R hermes:hermes "$HERMES_HOME" 2>/dev/null || \
             echo "Warning: chown failed (rootless container?) — continuing anyway"
+        # The .venv must also be re-chowned when UID is remapped, otherwise
+        # lazy_deps.py cannot install platform packages (discord.py, etc.).
+        chown -R hermes:hermes "$INSTALL_DIR/.venv" 2>/dev/null || \
+            echo "Warning: chown .venv failed (rootless container?) — continuing anyway"
     fi
 
     # Ensure config.yaml is readable by the hermes runtime user even if it was
@@ -57,17 +61,17 @@ fi
 # --- Running as hermes from here ---
 source "${INSTALL_DIR}/.venv/bin/activate"
 
-# Create essential directory structure.  Top-level dirs must exist on
-# startup because some platforms (e.g. Dokploy) mount an empty volume at
-# $HERMES_HOME on first boot, and the app crashes with FileNotFoundError
-# before it can create them itself.  Subdirectories under cache/ and
-# platforms/ (cache/images, cache/audio, platforms/whatsapp, …) are still
-# created on demand by get_hermes_dir() so new installs get the
-# consolidated layout.
+# Stamp install method for detect_install_method()
+echo "docker" > "${HERMES_HOME:=/opt/data}/.install_method" 2>/dev/null || true
+
+# Create essential directory structure.  Cache and platform directories
+# (cache/images, cache/audio, platforms/whatsapp, etc.) are created on
+# demand by the application — don't pre-create them here so new installs
+# get the consolidated layout from get_hermes_dir().
 # The "home/" subdirectory is a per-profile HOME for subprocesses (git,
 # ssh, gh, npm …).  Without it those tools write to /root which is
 # ephemeral and shared across profiles.  See issue #4426.
-mkdir -p "$HERMES_HOME"/{cron,sessions,logs,hooks,memories,skills,skins,plans,workspace,home,cache}
+mkdir -p "$HERMES_HOME"/{cron,sessions,logs,hooks,memories,skills,skins,plans,workspace,home}
 
 # .env
 if [ ! -f "$HERMES_HOME/.env" ]; then
@@ -98,14 +102,16 @@ if [ ! -f "$HERMES_HOME/auth.json" ] && [ -n "$HERMES_AUTH_JSON_BOOTSTRAP" ]; th
     chmod 600 "$HERMES_HOME/auth.json"
 fi
 
-# Skills sync disabled for slim ecommerce build
-# To re-enable: python3 "$INSTALL_DIR/tools/skills_sync.py"
+# Sync bundled skills (manifest-based so user edits are preserved)
+if [ -d "$INSTALL_DIR/skills" ]; then
+    python3 "$INSTALL_DIR/tools/skills_sync.py"
+fi
 
 # Optionally start `hermes dashboard` as a side-process.
 #
 # Toggled by HERMES_DASHBOARD=1 (also accepts "true"/"yes", case-insensitive).
 # Host/port/TUI can be overridden via:
-#   HERMES_DASHBOARD_HOST  (default 0.0.0.0 — exposed outside the container)
+#   HERMES_DASHBOARD_HOST  (default 127.0.0.1 — loopback only)
 #   HERMES_DASHBOARD_PORT  (default 9119, matches `hermes dashboard` default)
 #   HERMES_DASHBOARD_TUI   (already honored by `hermes dashboard` itself)
 #
@@ -116,16 +122,9 @@ fi
 # cleanup is needed.
 case "${HERMES_DASHBOARD:-}" in
     1|true|TRUE|True|yes|YES|Yes)
-        dash_host="${HERMES_DASHBOARD_HOST:-0.0.0.0}"
+        dash_host="${HERMES_DASHBOARD_HOST:-127.0.0.1}"
         dash_port="${HERMES_DASHBOARD_PORT:-9119}"
         dash_args=(--host "$dash_host" --port "$dash_port" --no-open)
-        # Binding to anything other than localhost requires --insecure — the
-        # dashboard refuses otherwise because it exposes API keys.  Inside a
-        # container this is the expected deployment (host reaches it via
-        # published port), so opt in automatically.
-        if [ "$dash_host" != "127.0.0.1" ] && [ "$dash_host" != "localhost" ]; then
-            dash_args+=(--insecure)
-        fi
         echo "Starting hermes dashboard on ${dash_host}:${dash_port} (background)"
         # Prefix dashboard output so it's distinguishable from the main
         # process in `docker logs`.  stdbuf keeps the pipe line-buffered.
