@@ -1,0 +1,64 @@
+# Build-context ignore for Dockerfile.slim only. BuildKit prefers
+# <dockerfile>.dockerignore over .dockerignore when building with
+# `-f Dockerfile.slim`, so the upstream .dockerignore stays untouched
+# (clean upstream syncs) while the slim build gets a tighter context.
+
+# Git
+.git
+.gitignore
+.gitmodules
+.gitattributes
+.mailmap
+
+# Dependencies
+node_modules
+**/node_modules
+.venv
+**/.venv
+.notebooklm-cli-venv/
+.notebooklm-playwright/
+.pip-cache/
+.uv-cache/
+
+# Built artifacts regenerated inside the image
+ui-tui/dist/
+ui-tui/packages/hermes-ink/dist/
+
+# CI/CD
+.github
+
+# Environment files
+.env
+.envrc
+
+# Slim image context. These trees stay in Git so the fork remains close to
+# upstream, but they are not copied into the messaging-only container.
+docs/
+environments/
+optional-skills/
+skills/
+tests/
+tinker-atropos/
+ui-tui/
+web/
+website/
+plans/
+.plans/
+RELEASE_*.md
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Runtime data (bind-mounted at /opt/data; must not leak into build context)
+data/
+.hermes-docker/
+.notebooklm-home/
+
+# Compose/profile runtime state (bind-mounted; avoid ownership/secret issues)
+hermes-config/
+runtime/
