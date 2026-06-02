@@ -1,0 +1,23 @@
+# docker-compose for the slim (tini+gosu, messaging-only) image.
+#
+# Builds Dockerfile.slim instead of the upstream s6-overlay Dockerfile. Use
+# this for local testing of the slim image; production pulls the prebuilt
+# ghcr.io/<owner>/hermes-slim image published by .github/workflows/build-push.yml.
+#
+#   HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose -f docker-compose.slim.yml up -d
+#
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.slim
+    image: hermes-slim
+    container_name: hermes
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ~/.hermes:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-10000}
+      - HERMES_GID=${HERMES_GID:-10000}
+    command: ["gateway", "run"]
